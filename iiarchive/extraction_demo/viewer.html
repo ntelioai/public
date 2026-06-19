@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Magazine Extraction — Review Viewer</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background:#f4f5f7; }
+  .arabic { font-family:"Segoe UI","Noto Naskh Arabic",Tahoma,sans-serif; }
+  .article-body { white-space:pre-wrap; line-height:1.9; max-height:60vh; overflow:auto; }
+  .thumb { cursor:pointer; border:1px solid #ddd; border-radius:6px; transition:.15s; background:#fff; }
+  .thumb:hover { box-shadow:0 4px 14px rgba(0,0,0,.18); transform:translateY(-2px); }
+  .pagecard .badge { position:absolute; top:6px; left:6px; }
+  .meta-pill { font-size:.75rem; }
+  #drop { border:2px dashed #aab; border-radius:10px; padding:40px; text-align:center; color:#667; background:#fff; }
+  .img-cell img { max-height:160px; object-fit:contain; background:#fff; }
+  table.tbl td,table.tbl th { font-size:.85rem; }
+  .kicker { color:#1769aa; font-weight:600; font-size:.85rem; }
+  .navbar-brand small { opacity:.7; font-weight:400; }
+</style>
+</head>
+<body>
+<nav class="navbar navbar-dark bg-dark px-3" dir="ltr">
+  <span class="navbar-brand mb-0">📰 Magazine Extraction <small id="src">— Review Viewer</small></span>
+  <span class="text-light small" id="topstats"></span>
+</nav>
+
+<div class="container-fluid py-3">
+  <div id="loader" dir="ltr">
+    <div id="drop">
+      <p class="mb-2 fw-bold">Loading <code>issue.json</code>…</p>
+      <p class="small mb-3 text-muted">If it doesn't load automatically (opening from file://), pick or drop the file:</p>
+      <input type="file" id="file" accept="application/json" class="form-control w-auto mx-auto">
+    </div>
+  </div>
+
+  <div id="app" style="display:none">
+    <ul class="nav nav-tabs mb-3" dir="ltr">
+      <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-articles">Articles <span class="badge bg-secondary" id="c-art"></span></a></li>
+      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-pages">Pages <span class="badge bg-secondary" id="c-pg"></span></a></li>
+      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-images">Images <span class="badge bg-secondary" id="c-img"></span></a></li>
+      <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-tables">Tables <span class="badge bg-secondary" id="c-tbl"></span></a></li>
+    </ul>
+
+    <div class="tab-content">
+      <!-- ARTICLES -->
+      <div class="tab-pane fade show active" id="tab-articles">
+        <div class="row">
+          <div class="col-lg-4" dir="ltr">
+            <input id="search" class="form-control mb-2" placeholder="Search headline / body…">
+            <div class="list-group" id="art-list" style="max-height:75vh;overflow:auto"></div>
+          </div>
+          <div class="col-lg-8">
+            <div id="art-detail" class="card"><div class="card-body text-muted" dir="ltr">Select an article →</div></div>
+          </div>
+        </div>
+      </div>
+      <!-- PAGES -->
+      <div class="tab-pane fade" id="tab-pages"><div class="row g-3" id="page-grid"></div></div>
+      <!-- IMAGES -->
+      <div class="tab-pane fade" id="tab-images"><div class="row g-3" id="img-grid"></div></div>
+      <!-- TABLES -->
+      <div class="tab-pane fade" id="tab-tables"><div id="tbl-list"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- lightbox -->
+<div class="modal fade" id="lb" tabindex="-1"><div class="modal-dialog modal-xl modal-dialog-centered">
+  <div class="modal-content"><div class="modal-body p-0 text-center bg-dark"><img id="lb-img" class="img-fluid"></div></div>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
+<script>
+let DATA=null;
+const esc = s => $('<div>').text(s==null?'':s).html();
+
+function boot(d){
+  DATA=d;
+  $('#loader').hide(); $('#app').show();
+  $('#src').text('— '+(d.source_file||''));
+  $('#topstats').text(`${d.page_count} pages · ${d.articles.length} articles · ${d.images.length} images · ${d.tables.length} tables · born_digital=${d.born_digital}`);
+  $('#c-art').text(d.articles.length); $('#c-pg').text(d.page_count);
+  $('#c-img').text(d.images.length); $('#c-tbl').text(d.tables.length);
+  renderArtList(d.articles); renderPages(d.pages); renderImages(d.images); renderTables(d.tables);
+  if(d.articles.length) showArt(d.articles[0].id);
+}
+
+function renderArtList(arts){
+  const $l=$('#art-list').empty();
+  arts.forEach(a=>{
+    $l.append(`<a href="#" class="list-group-item list-group-item-action" data-id="${a.id}">
+      <div class="d-flex justify-content-between" dir="ltr"><small class="text-muted">#${a.id} · p${a.page_start}${a.page_end!=a.page_start?'-'+a.page_end:''}</small>
+      <small class="text-muted">${a.word_count}w · ${a.images.length}🖼</small></div>
+      <div class="arabic" dir="rtl">${esc(a.headline)}</div></a>`);
+  });
+}
+function showArt(id){
+  const a=DATA.articles.find(x=>x.id===id); if(!a)return;
+  $('#art-list a').removeClass('active').filter(`[data-id=${id}]`).addClass('active');
+  let imgs=a.images.map(f=>`<img src="${f}" class="img-thumbnail me-2 mb-2 lb" style="max-height:120px">`).join('');
+  let caps=(a.captions||[]).map(c=>`<li class="arabic">${esc(c.text)}</li>`).join('');
+  $('#art-detail').html(`<div class="card-body">
+    ${a.kicker?`<div class="kicker arabic">${esc(a.kicker)}</div>`:''}
+    <h4 class="arabic">${esc(a.headline)}</h4>
+    ${a.byline?`<div class="text-muted arabic mb-2">${esc(a.byline)}</div>`:''}
+    <div class="mb-2" dir="ltr">
+      <span class="badge bg-light text-dark meta-pill">pages ${a.pages.join(', ')}</span>
+      <span class="badge bg-light text-dark meta-pill">${a.word_count} words</span>
+      <span class="badge bg-light text-dark meta-pill">${a.images.length} images</span>
+    </div>
+    ${imgs?`<div class="mb-3">${imgs}</div>`:''}
+    <div class="article-body arabic">${esc(a.body)||'<span class=text-muted>(no body text)</span>'}</div>
+    ${caps?`<hr><small class="text-muted" dir="ltr">Captions</small><ul>${caps}</ul>`:''}
+  </div>`);
+}
+function renderPages(pages){
+  const $g=$('#page-grid').empty();
+  pages.forEach(p=>$g.append(`<div class="col-6 col-md-3 col-xl-2">
+    <div class="pagecard position-relative">
+      <img src="${p.thumb}" class="thumb img-fluid w-100 lb">
+      <span class="badge bg-dark">p${p.page}</span>
+    </div>
+    <div class="small text-muted text-center" dir="ltr">${p.columns}col · ${p.char_count}ch · ${p.image_count}🖼</div>
+  </div>`));
+}
+function renderImages(imgs){
+  const $g=$('#img-grid').empty();
+  imgs.forEach(im=>$g.append(`<div class="col-6 col-md-3 col-xl-2 img-cell text-center">
+    <img src="${im.file}" class="img-thumbnail w-100 lb">
+    <div class="small text-muted" dir="ltr">p${im.page} · ${im.w}×${im.h}</div></div>`));
+}
+function renderTables(tbls){
+  const $l=$('#tbl-list').empty();
+  if(!tbls.length){$l.html('<p class="text-muted">No ruled tables detected.</p>');return;}
+  tbls.forEach((t,i)=>{
+    let head=(t.data[0]||[]).map(c=>`<th>${esc(c)}</th>`).join('');
+    let rows=t.data.slice(1).map(r=>'<tr>'+r.map(c=>`<td>${esc(c)}</td>`).join('')+'</tr>').join('');
+    $l.append(`<div class="card mb-3"><div class="card-header d-flex justify-content-between" dir="ltr">
+        <span>Table #${i+1} — page ${t.page}</span><small class="text-muted">${t.rows}×${t.cols}</small></div>
+      <div class="card-body p-2">
+        ${t.section_title?`<div class="kicker arabic">${esc(t.section_title)}</div>`:''}
+        ${t.title?`<div class="fw-bold arabic">${esc(t.title)}</div>`:''}
+        ${t.caption?`<div class="text-muted small arabic mb-2">${esc(t.caption)}</div>`:''}
+        <div class="table-responsive">
+        <table class="table table-sm table-bordered tbl arabic mb-0"><thead class="table-light">${head}</thead><tbody>${rows}</tbody></table>
+      </div></div></div>`);
+  });
+}
+
+// interactions
+$(document).on('click','#art-list a',function(e){e.preventDefault();showArt(+$(this).data('id'));});
+$('#search').on('input',function(){
+  const q=$(this).val().trim();
+  renderArtList(q ? DATA.articles.filter(a=>(a.headline+' '+a.kicker+' '+a.body).includes(q)) : DATA.articles);
+});
+$(document).on('click','.lb',function(){$('#lb-img').attr('src',$(this).attr('src'));new bootstrap.Modal('#lb').show();});
+
+// loading
+function tryFetch(){
+  fetch('issue.json').then(r=>{if(!r.ok)throw 0;return r.json()}).then(boot).catch(()=>{
+    $('#drop p').first().text('Could not auto-load (file:// blocks fetch). Pick issue.json below:');
+  });
+}
+$('#file').on('change',function(e){
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader(); r.onload=ev=>boot(JSON.parse(ev.target.result)); r.readAsText(f);
+});
+tryFetch();
+</script>
+</body>
+</html>
